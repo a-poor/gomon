@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"io/ioutil"
 	"log"
@@ -55,9 +57,41 @@ func anyFilesUpdatedSince(t time.Time) bool {
 }
 
 func runAndGetCancel(fn string) context.CancelFunc {
+	// Create the cancelable context
 	ctx, cancel := context.WithCancel(context.Background())
-	run := exec.CommandContext(ctx, "go", "run", fn)
-	run.Run()
+	// Create the run command
+	cmd := exec.CommandContext(ctx, "go", "run", fn)
+	// Capture stdout and stderr
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	// Run the command
+	cmd.Start()
+	// Kick off the output capturing
+	go func() {
+		bufout := bufio.NewReader(stdout)
+		buferr := bufio.NewReader(stderr)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				// Read/Print from stdout
+				cmdout, _, _ := bufout.ReadLine()
+				strout := string(cmdout)
+				if len(strout) > 0 {
+					fmt.Println("STDOUT", strout)
+				}
+
+				// Read/Print from stderr
+				cmderr, _, _ := buferr.ReadLine()
+				strerr := string(cmderr)
+				if len(strerr) > 0 {
+					fmt.Println("STDERR", strerr)
+				}
+			}
+		}
+
+	}()
 	return cancel
 }
 
@@ -82,6 +116,7 @@ func main() {
 			log.Println("Someone updated a file! Reloading...")
 			lastReload = time.Now()
 			cancel()
+
 			cancel = runAndGetCancel(fn)
 		}
 
