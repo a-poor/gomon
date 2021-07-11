@@ -61,36 +61,51 @@ func runAndGetCancel(fn string) context.CancelFunc {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Create the run command
 	cmd := exec.CommandContext(ctx, "go", "run", fn)
+
 	// Capture stdout and stderr
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
+
 	// Run the command
 	cmd.Start()
-	// Kick off the output capturing
+
+	// Kick off the stdout capturing
 	go func() {
 		bufout := bufio.NewReader(stdout)
-		buferr := bufio.NewReader(stderr)
+		defer stdout.Close()
 		for {
 			select {
 			case <-ctx.Done():
+				fmt.Println("stdout got a cancel message")
 				return
 			default:
 				// Read/Print from stdout
-				cmdout, _, _ := bufout.ReadLine()
+				cmdout, _ := bufout.ReadString('\n')
 				strout := string(cmdout)
 				if len(strout) > 0 {
-					fmt.Println("STDOUT", strout)
-				}
-
-				// Read/Print from stderr
-				cmderr, _, _ := buferr.ReadLine()
-				strerr := string(cmderr)
-				if len(strerr) > 0 {
-					fmt.Println("STDERR", strerr)
+					fmt.Print("STDOUT:", strout)
 				}
 			}
 		}
-
+	}()
+	// Kick off the stderr capturing
+	go func() {
+		buferr := bufio.NewReader(stderr)
+		defer stderr.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				fmt.Println("stderr got a cancel message")
+				return
+			default:
+				// Read/Print from stderr
+				cmderr, _ := buferr.ReadString('\n')
+				strerr := string(cmderr)
+				if len(strerr) > 0 {
+					fmt.Print("STDERR:", strerr)
+				}
+			}
+		}
 	}()
 	return cancel
 }
