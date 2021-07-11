@@ -56,7 +56,8 @@ func anyFilesUpdatedSince(t time.Time) bool {
 
 func runAndGetCancel(fn string) context.CancelFunc {
 	ctx, cancel := context.WithCancel(context.Background())
-	exec.CommandContext(ctx, "go", "run", fn)
+	run := exec.CommandContext(ctx, "go", "run", fn)
+	run.Run()
 	return cancel
 }
 
