@@ -63,16 +63,25 @@ func runAndGetCancel(fn string) context.CancelFunc {
 	cmd := exec.CommandContext(ctx, "go", "run", fn)
 
 	// Capture stdout and stderr
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Panicf("Error calling cmd.StdoutPipe() : %s", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Panicf("Error calling cmd.StderrPipe() : %s", err)
+	}
 
 	// Run the command
-	cmd.Start()
+	err = cmd.Start()
+	if err != nil {
+		log.Panicf("Error starting exec command : %s", err)
+	}
 
 	// Kick off the stdout capturing
 	go func() {
 		bufout := bufio.NewReader(stdout)
-		defer stdout.Close()
+		// defer stdout.Close()
 		for {
 			select {
 			case <-ctx.Done():
@@ -80,10 +89,14 @@ func runAndGetCancel(fn string) context.CancelFunc {
 				return
 			default:
 				// Read/Print from stdout
-				cmdout, _ := bufout.ReadString('\n')
+				cmdout, err := bufout.ReadString('\n')
+				if err != nil {
+					log.Printf("Error reading from stdout buffer : %s", err)
+				}
 				strout := string(cmdout)
 				if len(strout) > 0 {
-					fmt.Print("STDOUT:", strout)
+					fmt.Print("STDOUT: ", strout)
+					return
 				}
 			}
 		}
@@ -91,7 +104,7 @@ func runAndGetCancel(fn string) context.CancelFunc {
 	// Kick off the stderr capturing
 	go func() {
 		buferr := bufio.NewReader(stderr)
-		defer stderr.Close()
+		// defer stderr.Close()
 		for {
 			select {
 			case <-ctx.Done():
@@ -99,7 +112,11 @@ func runAndGetCancel(fn string) context.CancelFunc {
 				return
 			default:
 				// Read/Print from stderr
-				cmderr, _ := buferr.ReadString('\n')
+				cmderr, err := buferr.ReadString('\n')
+				if err != nil {
+					log.Printf("Error reading from stderr buffer : %s", err)
+					return
+				}
 				strerr := string(cmderr)
 				if len(strerr) > 0 {
 					fmt.Print("STDERR:", strerr)
