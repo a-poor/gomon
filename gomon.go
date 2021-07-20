@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"io/ioutil"
 	"log"
@@ -14,11 +15,13 @@ import (
 	"time"
 )
 
+// Get the main go file to be run from command line
+// arguments
 func getFileToRun() (string, error) {
 	if len(os.Args) < 2 {
-		return "", errors.New("No go file specified.")
+		return "", errors.New("no go file specified")
 	} else if len(os.Args) > 2 {
-		return "", errors.New("Too many command line arguments specified.")
+		return "", errors.New("too many command line arguments specified")
 	}
 	return os.Args[1], nil
 }
@@ -29,6 +32,7 @@ func isGoFile(f fs.FileInfo) bool {
 	return strings.HasSuffix(strings.ToLower(f.Name()), ".go")
 }
 
+// Get a slice of go file
 func getGoFiles() []fs.FileInfo {
 	files, err := ioutil.ReadDir("./")
 	if err != nil {
@@ -47,6 +51,7 @@ func getGoFiles() []fs.FileInfo {
 
 }
 
+// Check for file updates since `t`
 func anyFilesUpdatedSince(t time.Time) bool {
 	for _, f := range getGoFiles() {
 		if f.ModTime().Sub(t).Seconds() > 0 {
@@ -56,7 +61,48 @@ func anyFilesUpdatedSince(t time.Time) bool {
 	return false
 }
 
-func runAndGetCancel(fn string) context.CancelFunc {
+// Format text as red
+func toRed(text string) string {
+	return fmt.Sprintf("\033[31m%s\033[0m", text)
+}
+
+// Format text as blue
+func toBlue(text string) string {
+	return fmt.Sprintf("\033[94m%s\033[0m", text)
+}
+
+// Run in a goroutine. Captures output from stderr/stdout pipe and
+// passes to the logger to print. If EOF is reached, call cancel.
+// Or if cancel is already called, stop.
+func readOutputs(ctx context.Context, cancel context.CancelFunc, r io.Reader, l *log.Logger, logname string) {
+	bufout := bufio.NewReader(r)
+	// defer stdout.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// Read/Print from stdout
+			cmdout, err := bufout.ReadString('\n')
+			if err == io.EOF {
+				cancel()
+				return
+			}
+			if err != nil {
+				log.Printf("Error reading from %s : %s", logname, err)
+			}
+			strout := string(cmdout)
+			if len(strout) > 0 {
+				l.Printf("%s: %s", logname, strout)
+			}
+		}
+	}
+}
+
+// Run the go file with filename `fn` and start goroutines to pipe
+// stdout/stderr to the loggers. Returns the command context's
+// cancel function.
+func runAndGetCancel(fn string, logout *log.Logger, logerr *log.Logger) context.CancelFunc {
 	// Create the cancelable context
 	ctx, cancel := context.WithCancel(context.Background())
 	// Create the run command
@@ -65,11 +111,12 @@ func runAndGetCancel(fn string) context.CancelFunc {
 	// Capture stdout and stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Panicf("Error calling cmd.StdoutPipe() : %s", err)
+		log.Panicf("Error Connecting to StdOut : %s", err)
 	}
+
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		log.Panicf("Error calling cmd.StderrPipe() : %s", err)
+		log.Panicf("Error Connecting to StdErr : %s", err)
 	}
 
 	// Run the command
@@ -78,52 +125,10 @@ func runAndGetCancel(fn string) context.CancelFunc {
 		log.Panicf("Error starting exec command : %s", err)
 	}
 
-	// Kick off the stdout capturing
-	go func() {
-		bufout := bufio.NewReader(stdout)
-		// defer stdout.Close()
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Println("stdout got a cancel message")
-				return
-			default:
-				// Read/Print from stdout
-				cmdout, err := bufout.ReadString('\n')
-				if err != nil {
-					log.Printf("Error reading from stdout buffer : %s", err)
-				}
-				strout := string(cmdout)
-				if len(strout) > 0 {
-					fmt.Print("STDOUT: ", strout)
-					return
-				}
-			}
-		}
-	}()
-	// Kick off the stderr capturing
-	go func() {
-		buferr := bufio.NewReader(stderr)
-		// defer stderr.Close()
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Println("stderr got a cancel message")
-				return
-			default:
-				// Read/Print from stderr
-				cmderr, err := buferr.ReadString('\n')
-				if err != nil {
-					log.Printf("Error reading from stderr buffer : %s", err)
-					return
-				}
-				strerr := string(cmderr)
-				if len(strerr) > 0 {
-					fmt.Print("STDERR:", strerr)
-				}
-			}
-		}
-	}()
+	// Kick off the stdout/stderr capturing
+	go readOutputs(ctx, cancel, stdout, logout, toBlue("STDOUT"))
+	go readOutputs(ctx, cancel, stderr, logerr, toRed("STDERR"))
+
 	return cancel
 }
 
@@ -134,22 +139,32 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	// Loggers used to print output from stderr/stdout
+	logout := log.New(os.Stdout, "", 0)
+	logerr := log.New(os.Stderr, "", 0)
+
 	// Log the start
 	lastReload := time.Now()
-	log.Printf("Starting file \"%s\" at %s", fn, lastReload.Format("15:04:05"))
+	log.Printf("Starting file \"%s\"", fn)
 
 	// Create the context and cancel function
-	cancel := runAndGetCancel(fn)
+	cancel := runAndGetCancel(fn, logout, logerr)
 	defer cancel()
 
 	for {
 		// Check for file updates
 		if anyFilesUpdatedSince(lastReload) {
-			log.Println("Someone updated a file! Reloading...")
-			lastReload = time.Now()
+			// Tell the user reload is starting...
+			log.Println("Update detected. Reloading...")
+
+			// Cancel the current running command
 			cancel()
 
-			cancel = runAndGetCancel(fn)
+			// Checkpoint the last reload time
+			lastReload = time.Now()
+
+			// Rerun the command
+			cancel = runAndGetCancel(fn, logout, logerr)
 		}
 
 		// Wait 100ms before checking again
