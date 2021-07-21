@@ -6,6 +6,12 @@ A tool, written in Go, for automatically reloading a go file when file changes a
 
 It's meant to be a drop-in replacement for `go run`.
 
+I created this tool to get some experiance writing Go and because it ended up being useful (I find it comes in handy when working with the `net/http` package).
+
+_NOTE:_ This tool is currently in an early stage of development. It doesn't yet have unit tests and it doesn't have CLI options.
+
+## Example
+
 Say for example you have a `main.go` file that looks like this:
 
 ```go
