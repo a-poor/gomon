@@ -30,21 +30,9 @@ changelog:
     exclude:
       - '^docs:'
       - '^test:'
-
 release:
   github:
     owner: a-poor
     name: gomon
-
-brews:
-  - name: gomon
-    tap:
-      owner: a-poor
-      repo: gomon
-
-snapcraft:
-  - name: gomon
-    publish: true
-    license: MIT
 
     
